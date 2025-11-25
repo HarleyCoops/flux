@@ -1,0 +1,100 @@
+Metadata-Version: 2.4
+Name: flux
+Version: 0.0.0.post34+gf751166d8
+Summary: Inference codebase for FLUX
+Author-email: Black Forest Labs <support@blackforestlabs.ai>
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: torch>=2.0.0
+Requires-Dist: torchvision
+Requires-Dist: einops
+Requires-Dist: fire>=0.6.0
+Requires-Dist: huggingface-hub
+Requires-Dist: safetensors
+Requires-Dist: sentencepiece
+Requires-Dist: transformers
+Requires-Dist: tokenizers
+Requires-Dist: protobuf
+Requires-Dist: requests
+Requires-Dist: invisible-watermark
+Requires-Dist: diffusers
+Requires-Dist: accelerate
+Provides-Extra: streamlit
+Requires-Dist: streamlit; extra == "streamlit"
+Requires-Dist: streamlit-keyup; extra == "streamlit"
+Provides-Extra: gradio
+Requires-Dist: gradio; extra == "gradio"
+Provides-Extra: all
+Requires-Dist: flux[streamlit]; extra == "all"
+Requires-Dist: flux[gradio]; extra == "all"
+Dynamic: license-file
+
+# FLUX.2
+
+This repository contains inference code for FLUX.2-dev, leveraging the `diffusers` library and the remote text encoder endpoint for efficient generation on consumer hardware.
+
+## Installation
+
+```bash
+cd flux
+python3.10 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+## Usage
+
+### Command Line Interface
+
+Generate an image using the CLI:
+
+```bash
+python -m flux --prompt "A beautiful beach with a sunset"
+```
+
+Options:
+- `--name`: Model name (default: "black-forest-labs/FLUX.2-dev")
+- `--width`, `--height`: Image dimensions
+- `--num_steps`: Inference steps
+- `--guidance`: Guidance scale
+- `--seed`: Random seed
+
+### Python API
+
+```python
+from flux import Flux2Generator
+
+generator = Flux2Generator("black-forest-labs/FLUX.2-dev")
+image = generator.generate(
+    prompt="A futuristic city",
+    width=1024,
+    height=1024,
+    num_inference_steps=50
+)
+image.save("city.jpg")
+```
+
+### Demos
+
+**Gradio:**
+```bash
+python demo_gr.py
+```
+
+**Streamlit:**
+```bash
+streamlit run demo_st.py
+```
+
+## Requirements
+
+- Python 3.10+
+- PyTorch >= 2.0
+- Diffusers
+- Hugging Face Hub (login required for model access)
+
+Make sure to login to Hugging Face:
+```bash
+huggingface-cli login
+```
