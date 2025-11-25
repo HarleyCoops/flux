@@ -21,6 +21,8 @@ dependencies = [
   "protobuf",
   "requests",
   "invisible-watermark",
+  "diffusers",
+  "accelerate",
 ]
 
 [project.optional-dependencies]

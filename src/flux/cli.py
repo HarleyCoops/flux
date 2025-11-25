@@ -5,14 +5,11 @@ from dataclasses import dataclass
 from glob import iglob
 
 import torch
-from einops import rearrange
 from fire import Fire
 from PIL import ExifTags, Image
-
-from flux.sampling import denoise, get_noise, get_schedule, prepare, unpack
-from flux.util import (configs, embed_watermark, load_ae, load_clip,
-                       load_flow_model, load_t5)
 from transformers import pipeline
+
+from flux import Flux2Generator
 
 NSFW_THRESHOLD = 0.85
 
@@ -34,7 +31,7 @@ def parse_prompt(options: SamplingOptions) -> SamplingOptions | None:
         "- '/w <width>' will set the width of the generated image\n"
         "- '/h <height>' will set the height of the generated image\n"
         "- '/s <seed>' sets the next seed\n"
-        "- '/g <guidance>' sets the guidance (flux-dev only)\n"
+        "- '/g <guidance>' sets the guidance\n"
         "- '/n <steps>' sets the number of steps\n"
         "- '/q' to quit"
     )
@@ -80,7 +77,7 @@ def parse_prompt(options: SamplingOptions) -> SamplingOptions | None:
                 continue
             _, steps = prompt.split()
             options.num_steps = int(steps)
-            print(f"Setting seed to {options.num_steps}")
+            print(f"Setting steps to {options.num_steps}")
         elif prompt.startswith("/q"):
             print("Quitting")
             return None
@@ -93,74 +90,40 @@ def parse_prompt(options: SamplingOptions) -> SamplingOptions | None:
     return options
 
 
-@torch.inference_mode()
 def main(
-    name: str = "flux-schnell",
-    width: int = 1360,
-    height: int = 768,
+    name: str = "black-forest-labs/FLUX.2-dev",
+    width: int = 1024,
+    height: int = 1024,
     seed: int | None = None,
     prompt: str = (
         "a photo of a forest with mist swirling around the tree trunks. The word "
         '"FLUX" is painted over it in big, red brush strokes with visible texture'
     ),
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
-    num_steps: int | None = None,
+    num_steps: int = 50,
     loop: bool = False,
-    guidance: float = 3.5,
-    offload: bool = False,
+    guidance: float = 4.0,
     output_dir: str = "output",
     add_sampling_metadata: bool = True,
 ):
     """
     Sample the flux model. Either interactively (set `--loop`) or run for a
     single image.
-
-    Args:
-        name: Name of the model to load
-        height: height of the sample in pixels (should be a multiple of 16)
-        width: width of the sample in pixels (should be a multiple of 16)
-        seed: Set a seed for sampling
-        output_name: where to save the output image, `{idx}` will be replaced
-            by the index of the sample
-        prompt: Prompt used for sampling
-        device: Pytorch device
-        num_steps: number of sampling steps (default 4 for schnell, 50 for guidance distilled)
-        loop: start an interactive session and sample multiple times
-        guidance: guidance value used for guidance distillation
-        add_sampling_metadata: Add the prompt to the image Exif metadata
     """
-    nsfw_classifier = pipeline("image-classification", model="Falconsai/nsfw_image_detection", device=device)
+    print(f"Initializing Flux2Generator with model {name} on {device}...")
+    generator = Flux2Generator(model_name=name, device=device)
+    
+    # Optional NSFW check
+    try:
+        nsfw_classifier = pipeline("image-classification", model="Falconsai/nsfw_image_detection", device=device)
+    except Exception as e:
+        print(f"Warning: Could not load NSFW classifier: {e}")
+        nsfw_classifier = None
 
-    if name not in configs:
-        available = ", ".join(configs.keys())
-        raise ValueError(f"Got unknown model name: {name}, chose from {available}")
-
-    torch_device = torch.device(device)
-    if num_steps is None:
-        num_steps = 4 if name == "flux-schnell" else 50
-
-    # allow for packing and conversion to latent space
-    height = 16 * (height // 16)
-    width = 16 * (width // 16)
-
-    output_name = os.path.join(output_dir, "img_{idx}.jpg")
+    # Ensure output directory exists
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-        idx = 0
-    else:
-        fns = [fn for fn in iglob(output_name.format(idx="*")) if re.search(r"img_[0-9]+\.jpg$", fn)]
-        if len(fns) > 0:
-            idx = max(int(fn.split("_")[-1].split(".")[0]) for fn in fns) + 1
-        else:
-            idx = 0
 
-    # init all components
-    t5 = load_t5(torch_device, max_length=256 if name == "flux-schnell" else 512)
-    clip = load_clip(torch_device)
-    model = load_flow_model(name, device="cpu" if offload else torch_device)
-    ae = load_ae(name, device="cpu" if offload else torch_device)
-
-    rng = torch.Generator(device="cpu")
     opts = SamplingOptions(
         prompt=prompt,
         width=width,
@@ -175,72 +138,58 @@ def main(
 
     while opts is not None:
         if opts.seed is None:
-            opts.seed = rng.seed()
+            opts.seed = int(time.time()) # Simple random seed
+        
         print(f"Generating with seed {opts.seed}:\n{opts.prompt}")
         t0 = time.perf_counter()
 
-        # prepare input
-        x = get_noise(
-            1,
-            opts.height,
-            opts.width,
-            device=torch_device,
-            dtype=torch.bfloat16,
-            seed=opts.seed,
-        )
-        opts.seed = None
-        if offload:
-            ae = ae.cpu()
-            torch.cuda.empty_cache()
-            t5, clip = t5.to(torch_device), clip.to(torch_device)
-        inp = prepare(t5, clip, x, prompt=opts.prompt)
-        timesteps = get_schedule(opts.num_steps, inp["img"].shape[1], shift=(name != "flux-schnell"))
+        try:
+            image = generator.generate(
+                prompt=opts.prompt,
+                width=opts.width,
+                height=opts.height,
+                num_inference_steps=opts.num_steps,
+                guidance_scale=opts.guidance,
+                seed=opts.seed
+            )
+        except Exception as e:
+            print(f"Error during generation: {e}")
+            if loop:
+                opts = parse_prompt(opts)
+                continue
+            else:
+                break
 
-        # offload TEs to CPU, load model to gpu
-        if offload:
-            t5, clip = t5.cpu(), clip.cpu()
-            torch.cuda.empty_cache()
-            model = model.to(torch_device)
-
-        # denoise initial noise
-        x = denoise(model, **inp, timesteps=timesteps, guidance=opts.guidance)
-
-        # offload model, load autoencoder to gpu
-        if offload:
-            model.cpu()
-            torch.cuda.empty_cache()
-            ae.decoder.to(x.device)
-
-        # decode latents to pixel space
-        x = unpack(x.float(), opts.height, opts.width)
-        with torch.autocast(device_type=torch_device.type, dtype=torch.bfloat16):
-            x = ae.decode(x)
-
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
         t1 = time.perf_counter()
-
+        
+        # Save image
+        # Find next index
+        output_name = os.path.join(output_dir, "img_{idx}.jpg")
+        fns = [fn for fn in iglob(output_name.format(idx="*")) if re.search(r"img_[0-9]+\.jpg$", fn)]
+        if len(fns) > 0:
+            idx = max(int(fn.split("_")[-1].split(".")[0]) for fn in fns) + 1
+        else:
+            idx = 0
+            
         fn = output_name.format(idx=idx)
         print(f"Done in {t1 - t0:.1f}s. Saving {fn}")
-        # bring into PIL format and save
-        x = x.clamp(-1, 1)
-        x = embed_watermark(x.float())
-        x = rearrange(x[0], "c h w -> h w c")
 
-        img = Image.fromarray((127.5 * (x + 1.0)).cpu().byte().numpy())
-        nsfw_score = [x["score"] for x in nsfw_classifier(img) if x["label"] == "nsfw"][0]
+        # NSFW check
+        is_nsfw = False
+        if nsfw_classifier:
+            nsfw_score = [x["score"] for x in nsfw_classifier(image) if x["label"] == "nsfw"][0]
+            if nsfw_score >= NSFW_THRESHOLD:
+                print("Your generated image may contain NSFW content.")
+                is_nsfw = True
         
-        if nsfw_score < NSFW_THRESHOLD:
+        if not is_nsfw:
             exif_data = Image.Exif()
             exif_data[ExifTags.Base.Software] = "AI generated;txt2img;flux"
             exif_data[ExifTags.Base.Make] = "Black Forest Labs"
             exif_data[ExifTags.Base.Model] = name
             if add_sampling_metadata:
-                exif_data[ExifTags.Base.ImageDescription] = prompt
-            img.save(fn, exif=exif_data, quality=95, subsampling=0)
-            idx += 1
-        else:
-            print("Your generated image may contain NSFW content.")
+                exif_data[ExifTags.Base.ImageDescription] = opts.prompt
+            image.save(fn, exif=exif_data, quality=95, subsampling=0)
 
         if loop:
             print("-" * 80)
