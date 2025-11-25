@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Environment Variables
+.env
+
+# Distribution / Packaging
+build/
+dist/
+*.egg-info/
+
+# Flux Output
+output/
+output_check/
+*.jpg
+*.png
+!assets/*.jpg
+
+# IDEs
+.vscode/
+.idea/
+.cursor/
+
+# Mac
+.DS_Store
+

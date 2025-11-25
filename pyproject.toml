@@ -6,7 +6,7 @@ authors = [
 description = "Inference codebase for FLUX"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { file = "LICENSE.md" }
+license = { file = "LICENSE" }
 dynamic = ["version"]
 dependencies = [
   "torch >= 2.0.0",
@@ -14,6 +14,9 @@ dependencies = [
   "einops",
   "fire >= 0.6.0",
   "huggingface-hub",
+  "pillow",
+  "peft >= 0.17.0",
+  "numpy < 2.0",
   "safetensors",
   "sentencepiece",
   "transformers",

@@ -1,6 +1,16 @@
 import os
+
+import pytest
 import torch
+from huggingface_hub import get_token
+
 from flux import Flux2Generator
+
+token = os.getenv("HF_TOKEN") or get_token()
+pytestmark = pytest.mark.skipif(
+    token is None,
+    reason="HF_TOKEN or a logged-in Hugging Face CLI session is required to load FLUX.2-dev.",
+)
 
 def test_inference():
     print("Testing FLUX.2 inference...")

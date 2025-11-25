@@ -3,6 +3,9 @@ torchvision
 einops
 fire>=0.6.0
 huggingface-hub
+pillow
+peft>=0.17.0
+numpy<2.0
 safetensors
 sentencepiece
 transformers
